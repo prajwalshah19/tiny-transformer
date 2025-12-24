@@ -153,11 +153,45 @@ Tensor Tensor::transpose() const {
 
 Tensor Tensor::operator+(const Tensor& other) const {
     check_shape_compatibility(other);
-    Tensor result(shape_);
+
+    // do the math
+    std::vector<float> result_data(data_.size());
     for (size_t i = 0; i < data_.size(); ++i) {
-        result.data_[i] = data_[i] + other.data_[i];
+        result_data[i] = data_[i] + other.data_[i];
     }
-    return result;
+
+    // create result as shared pointer
+    auto result = std::make_shared<Tensor>(shape_, result_data);
+
+    if (requires_grad_ || other.requires_grad_) {
+        result->requires_grad_ = true;
+        
+        // store left and right as shared pointers as parents of result
+        auto left = std::make_shared<Tensor>(*this);
+        auto right = std::make_shared<Tensor>(other);
+        result->parents_ = {left, right};
+        
+        // capture result as weak_ptr to avoid circular reference
+        std::weak_ptr<Tensor> result_weak = result;
+        
+        result->backward_fn_ = [result_weak, left, right]() {
+            auto res = result_weak.lock();
+            if (!res || !res->grad_) return;
+            
+            // results current grad
+            const Tensor& grad = *(res->grad_);
+            
+            // accumulate parent grads with it
+            if (left->requires_grad_) {
+                left->backward(grad);
+            }
+            if (right->requires_grad_) {
+                right->backward(grad);
+            }
+        };
+    }
+    
+    return *result; // return cpy
 }
 
 Tensor Tensor::operator-(const Tensor& other) const {
@@ -297,6 +331,63 @@ Tensor Tensor::randn(const std::vector<size_t>& shape) {
     }
     
     return Tensor(shape, data);
+}
+
+// AUTOGRAD Implementation
+
+void Tensor::accumulate_grad(const Tensor& incoming_grad) {
+    if (shape_ != incoming_grad.shape_) {
+        throw std::runtime_error("Gradient shape mismatch");
+    }
+
+    if (!grad_) { // init gradient
+        grad_ = std::make_shared<Tensor>(shape_, 0.0f);
+    }
+
+    // accumulate grad with incoming_grad
+    for (size_t i = 0; i < data_.size(); ++i) {
+        grad_->data_[i] += incoming_grad.data_[i];
+    }
+}
+
+const Tensor& Tensor::grad() const {
+    if (!grad_) {
+        throw std::runtime_error("Gradient has not been computed. Call backward() first.");
+    }
+
+    return *grad_;
+}
+
+void Tensor::zero_grad() {
+    if (grad_) {
+        grad_->fill(0.0f);
+    }
+}
+
+void Tensor::backward() {
+    if (size() != 1) {
+        throw std::runtime_error("backward() can only be called on scalar tensors. Use backward(grad_output) for non-scalar tensors.");
+    }
+
+    Tensor grad_output({1}, 1.0f);
+    backward(grad_output);
+}
+
+void Tensor::backward(const Tensor& grad_output) {
+    if (!requires_grad_) {
+        return;
+    }
+
+    // init this tensors gradient with incoming gradient
+    if (!grad_) {
+        grad_ = std::make_shared<Tensor>(grad_output);
+    } else {
+        accumulate_grad(grad_output);
+    }
+    // call backward func to propogate to inputs
+    if (backward_fn_) {
+        backward_fn_();
+    }
 }
 
 } // namespace tiny_transformer

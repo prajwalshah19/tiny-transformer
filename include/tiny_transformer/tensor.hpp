@@ -4,14 +4,28 @@
 #include <vector>
 #include <memory>
 #include <initializer_list>
+#include <functional>
 
 namespace tiny_transformer {
 
-class Tensor {
+class Tensor : public std::enable_shared_from_this<Tensor> {
     // fields
     std::vector<float> data_;
     std::vector<size_t> shape_;
     std::vector<size_t> strides_;
+    std::vector<std::shared_ptr<Tensor>> parents_;
+
+    std::shared_ptr<Tensor> grad_; // gradient of this tensor
+    bool requires_grad_ = false;
+    std::function<void()> backward_fn_; // function to backpropagate one level
+
+     /**
+     * @brief Accumlates gradient
+     * 
+     * 
+     * @return None, modifies grad_ in place
+     */
+    void accumulate_grad(const Tensor& incoming_grad);
 
     /**
      * @brief Compute strides to dicate movement in memory to increment
@@ -45,20 +59,49 @@ public:
     Tensor(const std::vector<size_t>& shape);
     Tensor(const std::vector<size_t>& shape, float fill);
     Tensor(const std::vector<size_t>& shape, const std::vector<float>& data);
+    Tensor(const std::vector<size_t>& shape, bool requires_grad);
+    Tensor(const std::vector<size_t>& shape, const std::vector<float>& data, bool requires_grad);
 
     // access
     const std::vector<size_t>& shape() const { return shape_; }
     size_t ndim() const { return shape_.size(); }
     size_t size() const { return data_.size(); }
+    bool requires_grad() const { return requires_grad_; }
+    void set_requires_grad(bool requires_grad) { requires_grad_ = requires_grad; }
 
     // data access
     float& operator[](size_t idx);
     const float& operator[](size_t idx) const;
     float& at(const std::vector<size_t>& indices);
     const float& at(const std::vector<size_t>& indices) const;
+    bool has_grad() const { return grad_ != nullptr; }
+    const Tensor& grad() const;
+
     
     const std::vector<float>& data() const { return data_; }
     std::vector<float>& data() { return data_; }
+
+    // autograd
+    /**
+     * @brief For scalar outputs, calls backward(const Tensor&) with 1-filled gradient
+     * 
+     * @return None, Modifies grad_ in-place
+     */
+    void backward();
+
+     /**
+     * @brief For any output, accumulates gradient w/incoming and then applices backward_fn
+     * 
+     * @return None, Modifies grad_ in-place
+     */
+    void backward(const Tensor& grad_output); // non scalar outputs
+
+    /**
+     * @brief Resets gradient to avoid reaccumulation
+     * 
+     * @return None, Modifies grad_ in-place
+     */
+    void zero_grad();
 
     // shape ops
     /**
@@ -108,6 +151,10 @@ public:
 
     // matrix mult
     Tensor matmul(const Tensor& other) const;
+
+    // reduction ops
+    Tensor sum() const;
+    Tensor mean() const;
 
     // utils
     void fill(float value);
