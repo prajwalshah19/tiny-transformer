@@ -103,7 +103,7 @@ void Tensor::backward() {
         throw std::runtime_error("backward() requires scalar tensor. Use backward(grad_output) for non-scalar.");
     }
     
-    // Build topological order
+    // Build topological order, this eliminates branching off and reaccumulating because of repeats
     std::unordered_set<Node*> visited;
     std::vector<std::shared_ptr<Node>> topo;
     build_topo(node_, visited, topo);
@@ -127,7 +127,7 @@ void Tensor::backward(const Tensor& grad_output) {
         return;
     }
     
-    // Initialize or accumulate gradient (but DON'T call backward_fn)
+    // Initialize or accumulate gradient - first phase
     if (!node_->grad) {
         node_->grad = std::make_shared<Node>(node_->shape, grad_output.data());
     } else {
@@ -135,7 +135,6 @@ void Tensor::backward(const Tensor& grad_output) {
             node_->grad->data[i] += grad_output[i];
         }
     }
-    // Note: backward_fn is NOT called here anymore - it's called by the topo sort loop
 }
 
 // ==================== Operations ====================
