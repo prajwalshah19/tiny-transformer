@@ -245,14 +245,13 @@ void test_mse_loss() { // for OLS lin reg implementation
     std::cout << "Testing MSE loss pattern..." << std::endl;
     
     // MSE = mean((pred - target)^2)
-    // NOTE: Using diff1 * diff2 to avoid same-tensor issue
-    // TODO: Fix autograd to handle x * x correctly with topological sort
+    // loss = sum((pred - target) * (pred - target))
+    // Now works correctly with topological sort!
     Tensor pred({3}, {2.0f, 4.0f, 6.0f}, true);
     Tensor target({3}, {1.0f, 3.0f, 5.0f}, false);  // target doesn't need grad
     
-    Tensor diff1 = pred - target;  // [1, 1, 1]
-    Tensor diff2 = pred - target;  // [1, 1, 1] - separate computation
-    Tensor squared = diff1 * diff2; // [1, 1, 1]
+    Tensor diff = pred - target;  // [1, 1, 1]
+    Tensor squared = diff * diff; // [1, 1, 1]
     Tensor loss = squared.sum();  // 3
     
     assert(approx_equal(loss[0], 3.0f));
