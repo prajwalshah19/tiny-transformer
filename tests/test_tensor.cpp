@@ -184,6 +184,74 @@ void test_fill() {
     std::cout << "✓ Fill passed" << std::endl;
 }
 
+void test_broadcast_add() {
+    std::cout << "Testing broadcast addition..." << std::endl;
+    
+    // Test 1: Bias-style broadcast - (3, 2) + (1,) -> (3, 2)
+    Tensor X({3, 2}, {1, 2, 3, 4, 5, 6});
+    Tensor bias({1}, std::vector<float>{10.0f});
+    
+    Tensor result1 = X.add_broadcast(bias);
+    assert(result1.shape()[0] == 3);
+    assert(result1.shape()[1] == 2);
+    assert(result1.at({0, 0}) == 11.0f);  // 1 + 10
+    assert(result1.at({0, 1}) == 12.0f);  // 2 + 10
+    assert(result1.at({2, 1}) == 16.0f);  // 6 + 10
+    
+    std::cout << "  ✓ Scalar bias broadcast passed" << std::endl;
+    
+    // Test 2: Row broadcast - (3, 2) + (2,) -> (3, 2)
+    Tensor row({2}, {100.0f, 200.0f});
+    Tensor result2 = X.add_broadcast(row);
+    assert(result2.shape()[0] == 3);
+    assert(result2.shape()[1] == 2);
+    assert(result2.at({0, 0}) == 101.0f);  // 1 + 100
+    assert(result2.at({0, 1}) == 202.0f);  // 2 + 200
+    assert(result2.at({1, 0}) == 103.0f);  // 3 + 100
+    assert(result2.at({2, 1}) == 206.0f);  // 6 + 200
+    
+    std::cout << "  ✓ Row vector broadcast passed" << std::endl;
+    
+    // Test 3: Incompatible shapes - (3, 2) + (3,) should throw
+    Tensor incompatible({3}, {1, 2, 3});
+    bool threw = false;
+    try {
+        Tensor bad = X.add_broadcast(incompatible);
+    } catch (const std::invalid_argument& e) {
+        threw = true;
+    }
+    assert(threw);
+    
+    std::cout << "  ✓ Incompatible broadcast throws correctly" << std::endl;
+    
+    std::cout << "✓ Broadcast addition passed" << std::endl;
+}
+
+void test_broadcast_autograd() {
+    std::cout << "Testing broadcast autograd..." << std::endl;
+    
+    // (3, 2) + (1,) with gradients
+    Tensor X({3, 2}, {1, 2, 3, 4, 5, 6}, true);
+    Tensor bias({1}, {0.0f}, true);
+    
+    Tensor result = X.add_broadcast(bias);
+    Tensor loss = result.sum();
+    
+    loss.backward();
+    
+    // d(sum)/dX_i = 1 for all i
+    Tensor x_grad = X.grad();
+    for (size_t i = 0; i < X.size(); ++i) {
+        assert(std::abs(x_grad[i] - 1.0f) < 1e-5f);
+    }
+    
+    // d(sum)/dbias = 6 (gradient accumulated from all 6 elements)
+    Tensor b_grad = bias.grad();
+    assert(std::abs(b_grad[0] - 6.0f) < 1e-5f);
+    
+    std::cout << "✓ Broadcast autograd passed" << std::endl;
+}
+
 void test_print() {
     std::cout << "\nTesting print (visual inspection):" << std::endl;
     
