@@ -205,6 +205,185 @@ Tensor Tensor::operator+(const Tensor& other) const {
     return Tensor(result_node);
 }
 
+Tensor Tensor::add_broadcast(const Tensor& other) const {
+    // Handle simple case: other is scalar-like {1} or same shape
+    if (other.shape() == node_->shape) {
+        return *this + other;
+    }
+    
+    // Broadcast other across this tensor
+    // Common case: this is (n, m), other is (m,) or (1, m) or (1,)
+    const auto& a_shape = node_->shape;
+    const auto& b_shape = other.shape();
+    
+    // Compute output shape (max of aligned dimensions)
+    size_t ndim_a = a_shape.size();
+    size_t ndim_b = b_shape.size();
+    size_t ndim_out = std::max(ndim_a, ndim_b);
+    
+    // Pad shapes from the left with 1s for alignment
+    std::vector<size_t> a_padded(ndim_out, 1);
+    std::vector<size_t> b_padded(ndim_out, 1);
+    
+    for (size_t i = 0; i < ndim_a; ++i) {
+        a_padded[ndim_out - ndim_a + i] = a_shape[i];
+    }
+    for (size_t i = 0; i < ndim_b; ++i) {
+        b_padded[ndim_out - ndim_b + i] = b_shape[i];
+    }
+    
+    // Compute output shape and validate compatibility
+    std::vector<size_t> out_shape(ndim_out);
+    for (size_t i = 0; i < ndim_out; ++i) {
+        if (a_padded[i] != b_padded[i] && a_padded[i] != 1 && b_padded[i] != 1) {
+            throw std::invalid_argument("Shapes not broadcastable");
+        }
+        out_shape[i] = std::max(a_padded[i], b_padded[i]);
+    }
+    
+    // Compute strides for broadcasting (0 stride means repeat)
+    auto compute_broadcast_strides = [&](const std::vector<size_t>& padded_shape) {
+        std::vector<size_t> strides(ndim_out);
+        size_t stride = 1;
+        for (int i = ndim_out - 1; i >= 0; --i) {
+            strides[i] = (padded_shape[i] == 1) ? 0 : stride;
+            stride *= padded_shape[i];
+        }
+        return strides;
+    };
+    
+    auto a_strides = compute_broadcast_strides(a_padded);
+    auto b_strides = compute_broadcast_strides(b_padded);
+    
+    // Create result
+    auto result_node = std::make_shared<Node>(out_shape);
+    
+    // Compute total size and iterate
+    size_t total = 1;
+    for (size_t d : out_shape) total *= d;
+    
+    for (size_t flat_idx = 0; flat_idx < total; ++flat_idx) {
+        // Convert flat index to multi-dimensional index
+        std::vector<size_t> idx(ndim_out);
+        size_t tmp = flat_idx;
+        for (int i = ndim_out - 1; i >= 0; --i) {
+            idx[i] = tmp % out_shape[i];
+            tmp /= out_shape[i];
+        }
+        
+        // Compute source indices using broadcast strides
+        size_t a_idx = 0, b_idx = 0;
+        for (size_t i = 0; i < ndim_out; ++i) {
+            a_idx += idx[i] * a_strides[i];
+            b_idx += idx[i] * b_strides[i];
+        }
+        
+        result_node->data[flat_idx] = node_->data[a_idx] + other.node_->data[b_idx];
+    }
+    
+    // Setup autograd
+    if (node_->requires_grad || other.node_->requires_grad) {
+        result_node->requires_grad = true;
+        result_node->parents = {node_, other.node_};
+        
+        auto left_node = node_;
+        auto right_node = other.node_;
+        auto left_shape = a_shape;
+        auto right_shape = b_shape;
+        
+        result_node->backward_fn = [result_node, left_node, right_node, 
+                                     left_shape, right_shape, out_shape, ndim_out]() {
+            if (!result_node->grad) return;
+            
+            // For the left operand: sum over broadcasted dimensions
+            if (left_node->requires_grad) {
+                Tensor grad_left(left_shape, 0.0f);
+                
+                size_t total = 1;
+                for (size_t d : out_shape) total *= d;
+                
+                // Pad left shape
+                size_t ndim_l = left_shape.size();
+                std::vector<size_t> l_padded(ndim_out, 1);
+                for (size_t i = 0; i < ndim_l; ++i) {
+                    l_padded[ndim_out - ndim_l + i] = left_shape[i];
+                }
+                
+                for (size_t flat_idx = 0; flat_idx < total; ++flat_idx) {
+                    std::vector<size_t> idx(ndim_out);
+                    size_t tmp = flat_idx;
+                    for (int i = ndim_out - 1; i >= 0; --i) {
+                        idx[i] = tmp % out_shape[i];
+                        tmp /= out_shape[i];
+                    }
+                    
+                    // Map to left index (collapse broadcasted dims)
+                    std::vector<size_t> left_idx(ndim_l);
+                    for (size_t i = 0; i < ndim_l; ++i) {
+                        size_t out_i = ndim_out - ndim_l + i;
+                        left_idx[i] = (l_padded[out_i] == 1) ? 0 : idx[out_i];
+                    }
+                    
+                    size_t left_flat = 0;
+                    size_t stride = 1;
+                    for (int i = ndim_l - 1; i >= 0; --i) {
+                        left_flat += left_idx[i] * stride;
+                        stride *= left_shape[i];
+                    }
+                    
+                    grad_left[left_flat] += result_node->grad->data[flat_idx];
+                }
+                
+                Tensor left(left_node);
+                left.backward(grad_left);
+            }
+            
+            // For the right operand: sum over broadcasted dimensions  
+            if (right_node->requires_grad) {
+                Tensor grad_right(right_shape, 0.0f);
+                
+                size_t total = 1;
+                for (size_t d : out_shape) total *= d;
+                
+                size_t ndim_r = right_shape.size();
+                std::vector<size_t> r_padded(ndim_out, 1);
+                for (size_t i = 0; i < ndim_r; ++i) {
+                    r_padded[ndim_out - ndim_r + i] = right_shape[i];
+                }
+                
+                for (size_t flat_idx = 0; flat_idx < total; ++flat_idx) {
+                    std::vector<size_t> idx(ndim_out);
+                    size_t tmp = flat_idx;
+                    for (int i = ndim_out - 1; i >= 0; --i) {
+                        idx[i] = tmp % out_shape[i];
+                        tmp /= out_shape[i];
+                    }
+                    
+                    std::vector<size_t> right_idx(ndim_r);
+                    for (size_t i = 0; i < ndim_r; ++i) {
+                        size_t out_i = ndim_out - ndim_r + i;
+                        right_idx[i] = (r_padded[out_i] == 1) ? 0 : idx[out_i];
+                    }
+                    
+                    size_t right_flat = 0;
+                    size_t stride = 1;
+                    for (int i = ndim_r - 1; i >= 0; --i) {
+                        right_flat += right_idx[i] * stride;
+                        stride *= right_shape[i];
+                    }
+                    
+                    grad_right[right_flat] += result_node->grad->data[flat_idx];
+                }
+                
+                Tensor right(right_node);
+                right.backward(grad_right);
+            }
+        };
+    }
+    
+    return Tensor(result_node);
+}
+
 Tensor Tensor::operator-(const Tensor& other) const {
     check_shape_compatibility(other);
     

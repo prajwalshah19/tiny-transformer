@@ -120,6 +120,7 @@ public:
     Tensor transpose() const;
     
     Tensor operator+(const Tensor& other) const;
+    Tensor add_broadcast(const Tensor& other) const;
     Tensor operator-(const Tensor& other) const;
     Tensor operator*(const Tensor& other) const;
     Tensor operator*(float scalar) const;
