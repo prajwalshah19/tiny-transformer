@@ -13,8 +13,11 @@ OBJ_DIR = $(BUILD_DIR)/obj
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 OBJECTS = $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SOURCES))
 
-# Test files
-TEST_SOURCES = $(wildcard $(TEST_DIR)/*.cpp)
+# Test runner (unified)
+TEST_RUNNER = $(BUILD_DIR)/run_tests
+
+# Individual test files
+TEST_SOURCES = $(filter-out $(TEST_DIR)/run_tests.cpp, $(wildcard $(TEST_DIR)/test_*.cpp))
 TEST_BINARIES = $(patsubst $(TEST_DIR)/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))
 
 # Example files
@@ -35,8 +38,16 @@ $(BUILD_DIR):
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Build tests
-tests: $(TEST_BINARIES)
+# Build unified test runner (single source of truth)
+test: $(TEST_RUNNER)
+	@$(TEST_RUNNER)
+
+$(TEST_RUNNER): $(TEST_DIR)/run_tests.cpp $(OBJECTS) | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $< $(OBJECTS) -o $@ $(LDFLAGS)
+
+# Build individual test executables (for debugging specific tests)
+test-%: $(BUILD_DIR)/test_% 
+	@$(BUILD_DIR)/test_$*
 
 $(BUILD_DIR)/test_%: $(TEST_DIR)/test_%.cpp $(OBJECTS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $< $(OBJECTS) -o $@ $(LDFLAGS)
@@ -47,26 +58,23 @@ examples: $(EXAMPLE_BINARIES)
 $(BUILD_DIR)/%: $(EXAMPLE_DIR)/%.cpp $(OBJECTS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $< $(OBJECTS) -o $@ $(LDFLAGS)
 
-# Run tests
-run-tests: tests
-	@for test in $(TEST_BINARIES); do \
-		echo "Running $$test..."; \
-		$$test; \
-	done
-
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
 
 # Phony targets
-.PHONY: all tests examples run-tests clean
+.PHONY: all test examples clean help test-%
 
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  all         - Compile all source files (default)"
-	@echo "  tests       - Build all tests"
-	@echo "  examples    - Build all examples"
-	@echo "  run-tests   - Build and run all tests"
-	@echo "  clean       - Remove build artifacts"
-	@echo "  help        - Show this help message"
+	@echo "  all              - Compile all source files (default)"
+	@echo "  test             - Build and run unified test suite"
+	@echo "  test-tensor      - Build and run tensor tests only"
+	@echo "  test-autograd    - Build and run autograd tests only"  
+	@echo "  test-linear_regression - Build and run linear regression tests only"
+	@echo "  examples         - Build all examples"
+	@echo "  clean            - Remove build artifacts"
+	@echo "  help             - Show this help message"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  help           - Show this help message"
