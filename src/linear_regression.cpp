@@ -61,6 +61,7 @@ OLSResult LinearRegression::fit_impl(const Tensor& X, const Tensor& y,
     size_t max_iterations = max_iter.value_or(std::numeric_limits<size_t>::max());
     size_t iter = 0;
     bool converged = false;
+    float prev_loss = std::numeric_limits<float>::max();
     
     while (iter < max_iterations) {
         // Forward: y_pred = X @ W + b
@@ -71,6 +72,15 @@ OLSResult LinearRegression::fit_impl(const Tensor& X, const Tensor& y,
         Tensor diff = y_pred - y;
         Tensor sq_diff = diff * diff;
         Tensor loss = sq_diff.mean();
+        float loss_val = loss[0];
+
+        // convergence also when loss stops changing
+        float loss_delta = std::abs(prev_loss - loss_val);
+        if (loss_delta < tol_ || loss_val < tol_) {
+            converged = true;
+            break;
+        }
+        prev_loss = loss_val;
         
         // Zero gradients & backward
         W.zero_grad();
