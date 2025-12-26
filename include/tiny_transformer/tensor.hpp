@@ -1,5 +1,4 @@
-#ifndef TINY_TRANSFORMER_TENSOR_HPP
-#define TINY_TRANSFORMER_TENSOR_HPP
+#pragma once
 
 #include <vector>
 #include <memory>
@@ -139,5 +138,3 @@ public:
 };
 
 } // namespace tiny_transformer
-
-#endif
