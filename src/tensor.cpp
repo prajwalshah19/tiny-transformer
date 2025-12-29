@@ -624,6 +624,149 @@ Tensor Tensor::mean() const {
     return Tensor(result_node);
 }
 
+// ==================== GLM Activation FUncs ====================
+
+Tensor Tensor::relu() const {
+    auto out_node = std::make_shared<Node>(node_->shape);
+    size_t n = node_->data.size();
+    out_node->data.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        float v = node_->data[i];
+        out_node->data[i] = v > 0.0f ? v : 0.0f;
+    }
+
+    out_node->requires_grad = node_->requires_grad;
+    if (node_->requires_grad) {
+        out_node->parents = { node_ };
+        std::weak_ptr<Node> out_wp = out_node;
+        std::weak_ptr<Node> in_wp = node_;
+        out_node->backward_fn = [out_wp, in_wp]() {
+            auto out_sp = out_wp.lock();
+            auto in_sp = in_wp.lock();
+            if (!out_sp || !in_sp) return;
+            if (!out_sp->grad) return;
+            if (!in_sp->grad) in_sp->grad = std::make_shared<Node>(in_sp->shape, 0.0f);
+            size_t m = in_sp->data.size();
+            for (size_t j = 0; j < m; ++j) {
+                float vin = in_sp->data[j];
+                float grad_out = out_sp->grad->data[j];
+                float deriv = vin > 0.0f ? 1.0f : 0.0f; // subgradient at 0 chosen as 0
+                in_sp->grad->data[j] += grad_out * deriv;
+            }
+        };
+    }
+
+    return Tensor(out_node);
+}
+
+Tensor Tensor::sigmoid() const {
+    auto out_node = std::make_shared<Node>(node_->shape);
+    size_t n = node_->data.size();
+    out_node->data.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        out_node->data[i] = 1.0f / (1.0f + std::exp(-node_->data[i]));
+    }
+
+    out_node->requires_grad = node_->requires_grad;
+    if (node_->requires_grad) {
+        // keep parent reference for backward
+        out_node->parents = { node_ };
+        // weak_ptrs to avoid cycles
+        std::weak_ptr<Node> out_wp = out_node;
+        std::weak_ptr<Node> in_wp = node_;
+        out_node->backward_fn = [out_wp, in_wp]() {
+            auto out_sp = out_wp.lock();
+            auto in_sp = in_wp.lock();
+            if (!out_sp || !in_sp) return;
+            if (!out_sp->grad) return; // nothing to backprop
+            if (!in_sp->grad) in_sp->grad = std::make_shared<Node>(in_sp->shape, 0.0f);
+            size_t m = in_sp->data.size();
+            for (size_t j = 0; j < m; ++j) {
+                float s = out_sp->data[j]; // sigmoid(x)
+                float grad_out = out_sp->grad->data[j];
+                // derivative: s * (1 - s)
+                in_sp->grad->data[j] += grad_out * s * (1.0f - s);
+            }
+        };
+    }
+
+    return Tensor(out_node);
+}
+Tensor Tensor::softmax() const {
+    // along the last axis (numerically stable)
+    // what does this mean? - compute the softmax independently across different batches, independently normalize features
+    // ex, suppose we have dims for batch, sample, we dont want feature softmax to entangle, ruins IID
+    const auto& shape = node_->shape;
+    if (shape.empty()) {
+        // scalar -> softmax is 1
+        return Tensor(std::make_shared<Node>(std::vector<size_t>{1}, std::vector<float>{1.0f}));
+    }
+
+    size_t last_dim = shape.back();
+    size_t total = node_->data.size();
+    size_t blocks = total / last_dim; // number of independent vectors
+
+    auto out_node = std::make_shared<Node>(shape);
+    out_node->data.resize(total);
+
+    // compute softmax per block
+    for (size_t b = 0; b < blocks; ++b) {
+        size_t offset = b * last_dim;
+        // find max for numerical stability
+        float m = node_->data[offset];
+        for (size_t j = 1; j < last_dim; ++j) {
+            float v = node_->data[offset + j];
+            if (v > m) m = v;
+        }
+        // exponentiate and sum
+        float sum = 0.0f;
+        for (size_t j = 0; j < last_dim; ++j) {
+            float e = std::exp(node_->data[offset + j] - m);
+            out_node->data[offset + j] = e;
+            sum += e;
+        }
+        // normalize
+        float inv_sum = 1.0f / sum;
+        for (size_t j = 0; j < last_dim; ++j) {
+            out_node->data[offset + j] *= inv_sum;
+        }
+    }
+
+    out_node->requires_grad = node_->requires_grad;
+    if (node_->requires_grad) {
+        out_node->parents = { node_ };
+        std::weak_ptr<Node> out_wp = out_node;
+        std::weak_ptr<Node> in_wp = node_;
+        size_t ld = last_dim;
+        size_t blks = blocks;
+        out_node->backward_fn = [out_wp, in_wp, ld, blks]() {
+            auto out_sp = out_wp.lock();
+            auto in_sp = in_wp.lock();
+            if (!out_sp || !in_sp) return;
+            if (!out_sp->grad) return;
+            if (!in_sp->grad) in_sp->grad = std::make_shared<Node>(in_sp->shape, 0.0f);
+
+            // For each block compute: grad_in = softmax * (grad_out - dot(grad_out, softmax))
+            for (size_t b = 0; b < blks; ++b) {
+                size_t off = b * ld;
+                // dot = sum_j grad_out_j * s_j
+                float dot = 0.0f;
+                for (size_t j = 0; j < ld; ++j) {
+                    dot += out_sp->grad->data[off + j] * out_sp->data[off + j];
+                }
+                for (size_t i = 0; i < ld; ++i) {
+                    float s_i = out_sp->data[off + i];
+                    float g_out = out_sp->grad->data[off + i];
+                    float g_in = s_i * (g_out - dot);
+                    in_sp->grad->data[off + i] += g_in;
+                }
+            }
+        };
+    }
+
+    return Tensor(out_node);
+}
+
 // ==================== Utilities ====================
 
 void Tensor::fill(float value) {

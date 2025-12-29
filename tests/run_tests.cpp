@@ -164,6 +164,30 @@ TEST(Tensor, constructors) {
     Tensor t3({2, 2}, {1, 2, 3, 4});
     TEST_ASSERT(t3[3] == 4.0f);
 }
+TEST(Tensor, sigmoid) {
+    Tensor t({3}, {-1.0f, 0.0f, 1.0f});
+    Tensor out = t.sigmoid();
+    TEST_ASSERT(std::abs(out[0] - 0.268941f) < 1e-5f); // sigmoid(-1)
+    TEST_ASSERT(std::abs(out[1] - 0.5f) < 1e-5f);      // sigmoid(0)
+    TEST_ASSERT(std::abs(out[2] - 0.731058f) < 1e-5f); // sigmoid(1)
+}
+
+TEST(Tensor, relu) {
+    Tensor t({4}, {-2.0f, 0.0f, 3.5f, -0.1f});
+    Tensor out = t.relu();
+    TEST_ASSERT(out[0] == 0.0f);
+    TEST_ASSERT(out[1] == 0.0f);
+    TEST_ASSERT(out[2] == 3.5f);
+    TEST_ASSERT(out[3] == 0.0f);
+}
+
+TEST(Tensor, softmax) {
+    Tensor t({3}, {1.0f, 2.0f, 3.0f});
+    Tensor out = t.softmax();
+    float sum = out[0] + out[1] + out[2];
+    TEST_ASSERT(std::abs(sum - 1.0f) < 1e-5f);
+    TEST_ASSERT(out[0] < out[1] && out[1] < out[2]);
+}
 
 TEST(Tensor, indexing) {
     Tensor t({2, 3}, {1, 2, 3, 4, 5, 6});

@@ -252,6 +252,38 @@ void test_broadcast_autograd() {
     std::cout << "✓ Broadcast autograd passed" << std::endl;
 }
 
+void test_sigmoid() {
+    std::cout << "Testing sigmoid..." << std::endl;
+    Tensor t({3}, {-1.0f, 0.0f, 1.0f});
+    Tensor out = t.sigmoid();
+    assert(std::abs(out[0] - 0.268941f) < 1e-5f); // sigmoid(-1)
+    assert(std::abs(out[1] - 0.5f) < 1e-5f);      // sigmoid(0)
+    assert(std::abs(out[2] - 0.731058f) < 1e-5f); // sigmoid(1)
+    std::cout << "\u2713 Sigmoid passed" << std::endl;
+}
+
+void test_relu() {
+    std::cout << "Testing relu..." << std::endl;
+    Tensor t({4}, {-2.0f, 0.0f, 3.5f, -0.1f});
+    Tensor out = t.relu();
+    assert(out[0] == 0.0f);
+    assert(out[1] == 0.0f);
+    assert(out[2] == 3.5f);
+    assert(out[3] == 0.0f);
+    std::cout << "\u2713 ReLU passed" << std::endl;
+}
+
+void test_softmax() {
+    std::cout << "Testing softmax..." << std::endl;
+    Tensor t({3}, {1.0f, 2.0f, 3.0f});
+    Tensor out = t.softmax();
+    float sum = out[0] + out[1] + out[2];
+    assert(std::abs(sum - 1.0f) < 1e-5f);
+    // Check values (softmax should be monotonic)
+    assert(out[0] < out[1] && out[1] < out[2]);
+    std::cout << "\u2713 Softmax passed" << std::endl;
+}
+
 void test_print() {
     std::cout << "\nTesting print (visual inspection):" << std::endl;
     
