@@ -124,6 +124,10 @@ public:
     Tensor operator*(const Tensor& other) const;
     Tensor operator*(float scalar) const;
     Tensor matmul(const Tensor& other) const;
+    Tensor softmax() const;
+    Tensor sigmoid() const;
+    Tensor relu() const;
+    // TODO: in-place variants for activation functions when requires_grad=false
     
     Tensor sum() const;
     Tensor mean() const;
